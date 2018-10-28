@@ -25,11 +25,12 @@ object Texts_ui {
 
     val flow: IO[Unit] = for {
       onMenuItemClick <- Handler.create[Item]
+      enabledEdditing <- Handler.create[Boolean](true)
       onTextEdit <- Handler.create[Texts]
       saveText <- Handler.create[(PageId, String, Texts)]
       ps <- TextsWsApi.pages("mde")
       textReq <- IO.pure(onMenuItemClick.map(pg => TextsWsApi.texts("mde", pg.id._1, pg.id._2)))
-      text <- hammockObservableExec(textReq)
+      text <- HammockExecuter.hammockObservableExec(textReq)
       ns <- IO.pure(createWorkflow(onMenuItemClick, ps, text, onTextEdit, saveText))
       st <- IO {saveText.doOnNext(t => println("save " + t._2 + " " + t._3.en)).subscribe()}
       ow <- OutWatch.renderInto("#app", ns)
@@ -39,17 +40,8 @@ object Texts_ui {
   }
 
 
-  private def hammockObservableExec[T](textReq: Observable[Free[HammockF, T]]) = {
-    IO {
-      implicit val interpreter: Interpreter[IO] = Interpreter[IO]
-      textReq.flatMap(
-        r => Observable.fromFuture(r.exec[IO].unsafeToFuture())
-      )
-    }
-  }
-
   private def createWorkflow(
-                              textIdO: Handler[Item],
+                              currentTextId: Handler[Item],
                               ps: List[Page],
                               texts: Observable[Texts],
                               onTextEdit: Handler[Texts],
@@ -60,24 +52,25 @@ object Texts_ui {
       textId <- page.text_ids
     } yield Item((page.page_id, textId), s"${page.page_id}.$textId"))
 
-//    val updateEngText: ProHandler[String, Texts] = onTextEdit.transformSink(sk => sk.flatMap(s => texts.map(_.copy(en = Some(s)))))
-    val combineDataToSave: Observable[(PageId, String, Texts)] = onTextEdit.combineLatestMap(textIdO)((text, item) => (item.id._1, item.id._2, text))
+    val combineDataToSave: Observable[(PageId, String, Texts)] = onTextEdit.combineLatestMap(currentTextId)((text, item) => (item.id._1, item.id._2, text))
+    val engTextVal = texts.map(_.en.getOrElse("").toString)
+    val engTextEdit: Observable[String] => Observable[Texts] = sk => sk.flatMap(s => texts.map(_.copy(en = Some(s))))
+
     <.div(^.className := "full height",
-      listItems(listItemsObs, textIdO),
+      listItems(listItemsObs, currentTextId),
       <.div(^.className := "ui container")(
         <.form(
           ^.className := "ui form",
-          <.div(^.className := "ui header", ^.child <-- textIdO.map(_.title)),
+          <.div(^.className := "ui header", ^.child <-- currentTextId.map(_.title)),
           <.div(
             ^.className := "field",
             <.label("eng"),
-            <.textArea(^.value <-- texts.map(_.en.getOrElse("").toString), ^.onInput.value.transform(sk => sk.flatMap(s => texts.map(_.copy(en = Some(s))))) --> onTextEdit)
+            <.textArea(^.value <-- engTextVal, ^.onInput.value.transform(engTextEdit) --> onTextEdit)
           ),
           <.button(^.className := "ui teal large submit button", "Save", ^.onClick(combineDataToSave) --> saveText),
         )
       )
     )
-    // menuItemsView
   }
 
   case class Item(id: (PageId, String), title: String)
@@ -88,7 +81,7 @@ object Texts_ui {
   private def listItems(menuItems: Observable[List[Item]], onClick: Handler[Item]) = {
     <.div(^.className := "toc",
       <.div(^.className := "ui sidebar inverted vertical menu visible",
-        ^.children <-- menuItems.doOnNext(t => println(t + " gg")).map(items => items.map(item =>
+        ^.children <-- menuItems.map(_.map(item =>
           <.a(^.className := "item",
             ^.onClick(item) --> onClick,
             item.title,
