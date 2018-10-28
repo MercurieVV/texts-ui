@@ -32,13 +32,21 @@ object Texts_ui {
       textReq <- IO.pure(onMenuItemClick.map(pg => TextsWsApi.texts("mde", pg.id._1, pg.id._2)))
       text <- HammockExecuter.hammockObservableExec(textReq)
       ns <- IO.pure(createWorkflow(onMenuItemClick, ps, text, onTextEdit, saveText))
-      st <- IO {saveText.doOnNext(t => println("save " + t._2 + " " + t._3.en)).subscribe()}
+      st <- IO {
+        saveText.doOnNext(t => println("save " + t._2 + " " + t._3.en)).subscribe()
+      }
       ow <- OutWatch.renderInto("#app", ns)
     } yield ow
 
     flow.unsafeRunAsync(eith => println(eith))
   }
 
+
+
+  case class Item(id: (PageId, String), title: String)
+
+  val < = dsl.tags
+  val ^ = dsl.attributes
 
   private def createWorkflow(
                               currentTextId: Handler[Item],
@@ -52,36 +60,31 @@ object Texts_ui {
       textId <- page.text_ids
     } yield Item((page.page_id, textId), s"${page.page_id}.$textId"))
 
-    val combineDataToSave: Observable[(PageId, String, Texts)] = onTextEdit.combineLatestMap(currentTextId)((text, item) => (item.id._1, item.id._2, text))
-    val engTextVal = texts.map(_.en.getOrElse("").toString)
-    val engTextEdit: Observable[String] => Observable[Texts] = sk => sk.flatMap(s => texts.map(_.copy(en = Some(s))))
+    val combineTextAndItsIdToSave: Observable[(PageId, String, Texts)] = onTextEdit.combineLatestMap(currentTextId)((text, item) => (item.id._1, item.id._2, text))
+    val engTextVal = textForLang(texts, _.en)
+    val engTextEdit: Observable[String] => Observable[Texts] = changeText(texts, (t, s) => t.copy(en = s))
 
     <.div(^.className := "full height",
       listItems(listItemsObs, currentTextId),
       <.div(^.className := "ui container")(
         <.form(
           ^.className := "ui form",
-          <.div(^.className := "ui header", ^.child <-- currentTextId.map(_.title)),
+          <.div(^.className := "ui header", currentTextId.map(_.title)),
           <.div(
             ^.className := "field",
             <.label("eng"),
             <.textArea(^.value <-- engTextVal, ^.onInput.value.transform(engTextEdit) --> onTextEdit)
           ),
-          <.button(^.className := "ui teal large submit button", "Save", ^.onClick(combineDataToSave) --> saveText),
+          <.button(^.className := "ui teal large submit button", "Save", ^.onClick(combineTextAndItsIdToSave) --> saveText),
         )
       )
     )
   }
 
-  case class Item(id: (PageId, String), title: String)
-
-  val < = dsl.tags
-  val ^ = dsl.attributes
-
   private def listItems(menuItems: Observable[List[Item]], onClick: Handler[Item]) = {
     <.div(^.className := "toc",
       <.div(^.className := "ui sidebar inverted vertical menu visible",
-        ^.children <-- menuItems.map(_.map(item =>
+        menuItems.map(_.map(item =>
           <.a(^.className := "item",
             ^.onClick(item) --> onClick,
             item.title,
@@ -91,4 +94,17 @@ object Texts_ui {
     )
   }
 
+
+  private def changeText(texts: Observable[Texts], changeText: (Texts, Option[String]) => Texts): Observable[String] => Observable[Texts] = {
+    strO =>
+      strO
+        .map(Some(_))
+        .flatMap(s => {
+          texts.map(changeText(_, s))
+        })
+  }
+
+  private def textForLang(texts: Observable[Texts], lang: Texts => Option[String]): Observable[String] = {
+    texts.map(lang).map(_.getOrElse("").toString)
+  }
 }
