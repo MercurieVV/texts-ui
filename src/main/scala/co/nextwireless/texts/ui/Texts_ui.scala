@@ -8,8 +8,10 @@ import co.nextwireless.texts.ui.client.swagger.zapi.impl._
 import co.nextwireless.texts.ui.client.swagger.model._
 import hammock.HammockF
 import hammock.js.Interpreter
-import outwatch.dom.{Handler, Observable, OutWatch, Sink, dsl}
+import outwatch.dom.{Handler, OutWatch, Sink, dsl}
 import monix.execution.Scheduler.Implicits.global
+import monix.reactive.Observable
+import outwatch.Pipe
 
 /**
   * Created with IntelliJ IDEA.
@@ -29,7 +31,7 @@ object Texts_ui {
       textReq <- IO.pure(onMenuItemClick.map(pg => TextsWsApi.texts("mde", pg.id._1, pg.id._2)))
       text <- hammockObservableExec(textReq)
       ns <- IO.pure(createWorkflow(onMenuItemClick, ps, text, onTextEdit, saveText))
-      st <- IO {saveText.doOnNext(t => println(t)).subscribe()}
+      st <- IO {saveText.doOnNext(t => println("save " + t._2 + " " + t._3.en)).subscribe()}
       ow <- OutWatch.renderInto("#app", ns)
     } yield ow
 
@@ -39,7 +41,7 @@ object Texts_ui {
 
   private def hammockObservableExec[T](textReq: Observable[Free[HammockF, T]]) = {
     IO {
-      implicit val interpreter = Interpreter[IO]
+      implicit val interpreter: Interpreter[IO] = Interpreter[IO]
       textReq.flatMap(
         r => Observable.fromFuture(r.exec[IO].unsafeToFuture())
       )
@@ -58,28 +60,22 @@ object Texts_ui {
       textId <- page.text_ids
     } yield Item((page.page_id, textId), s"${page.page_id}.$textId"))
 
-    val value: Observable[(PageId, String, Texts)] = onTextEdit.zipMap(textIdO)((text, item) => (item.id._1, item.id._2, text))
-    <.div(
+//    val updateEngText: ProHandler[String, Texts] = onTextEdit.transformSink(sk => sk.flatMap(s => texts.map(_.copy(en = Some(s)))))
+    val combineDataToSave: Observable[(PageId, String, Texts)] = onTextEdit.combineLatestMap(textIdO)((text, item) => (item.id._1, item.id._2, text))
+    <.div(^.className := "full height",
       listItems(listItemsObs, textIdO),
-      <.div(^.child <-- textIdO.map(_.title)),
-      <.div(<.textArea(^.value <-- texts.map(_.en.getOrElse("").toString), ^.onInput.value --> onTextEdit.transformSink(sk => sk.flatMap(s => texts.map(_.copy(en = Some(s))))))),
-      <.button("Save", ^.onClick(value) --> saveText),
-//      <.button("Save", ^.onClick(onTextEdit.zipMap(oc)((text, page) => (page._1, page._2, text))) --> saveText)
-
-      /*
-            <.div(^.child <-- texts.zip(textIdO)
-              .map(t => {
-                println("list te")
-                <.div(
-                  <.div(<.textArea(t._1.en.getOrElse("").toString, ^.onInput.value --> onTextEdit.mapSink(s => {
-                    val tc = t._1.copy(en = Some(s))
-                    println(tc)
-                    tc
-                  }))),
-                )
-              }),
-            )
-      */
+      <.div(^.className := "ui container")(
+        <.form(
+          ^.className := "ui form",
+          <.div(^.className := "ui header", ^.child <-- textIdO.map(_.title)),
+          <.div(
+            ^.className := "field",
+            <.label("eng"),
+            <.textArea(^.value <-- texts.map(_.en.getOrElse("").toString), ^.onInput.value.transform(sk => sk.flatMap(s => texts.map(_.copy(en = Some(s))))) --> onTextEdit)
+          ),
+          <.button(^.className := "ui teal large submit button", "Save", ^.onClick(combineDataToSave) --> saveText),
+        )
+      )
     )
     // menuItemsView
   }
@@ -90,16 +86,15 @@ object Texts_ui {
   val ^ = dsl.attributes
 
   private def listItems(menuItems: Observable[List[Item]], onClick: Handler[Item]) = {
-    <.ul(
-      ^.children <-- menuItems.doOnNext(t => println(t + " gg")).map(items => items.map(item =>
-        <.li(
-          ^.onClick(item) --> onClick.mapSink(f=>{
-            println("xxx")
-            f
-          }),
-          item.title,
-        )
-      ))
+    <.div(^.className := "toc",
+      <.div(^.className := "ui sidebar inverted vertical menu visible",
+        ^.children <-- menuItems.doOnNext(t => println(t + " gg")).map(items => items.map(item =>
+          <.a(^.className := "item",
+            ^.onClick(item) --> onClick,
+            item.title,
+          )
+        ))
+      )
     )
   }
 

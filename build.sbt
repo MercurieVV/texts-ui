@@ -4,8 +4,11 @@ version := "0.1.0"
 
 scalaVersion := "2.12.6"
 
+resolvers += "jitpack" at "https://jitpack.io"
+
 libraryDependencies ++= Seq(
-  "io.github.outwatch" %%% "outwatch" % "1.0.0-RC2",
+//  "io.github.outwatch" %%% "outwatch" % "1.0.0-RC2",
+  "com.github.outwatch" % "outwatch" % "master-SNAPSHOT",
   "org.scalatest" %%% "scalatest" % "3.0.5" % Test,
   
   "com.beachape" %%% "enumeratum" % "1.5.13",
