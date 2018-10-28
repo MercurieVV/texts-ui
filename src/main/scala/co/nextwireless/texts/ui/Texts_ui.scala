@@ -8,7 +8,7 @@ import co.nextwireless.texts.ui.client.swagger.zapi.impl._
 import co.nextwireless.texts.ui.client.swagger.model._
 import hammock.HammockF
 import hammock.js.Interpreter
-import outwatch.dom.{Handler, OutWatch, Sink, dsl}
+import outwatch.dom.{Handler, OutWatch, Sink, VNode, dsl}
 import monix.execution.Scheduler.Implicits.global
 import monix.reactive.Observable
 import outwatch.Pipe
@@ -28,10 +28,10 @@ object Texts_ui {
       enabledEdditing <- Handler.create[Boolean](true)
       onTextEdit <- Handler.create[Texts]
       saveText <- Handler.create[(PageId, String, Texts)]
-      ps <- TextsWsApi.pages("mde")
+      pages <- TextsWsApi.pages("mde")
       textReq <- IO.pure(onMenuItemClick.map(pg => TextsWsApi.texts("mde", pg.id._1, pg.id._2)))
       text <- HammockExecuter.hammockObservableExec(textReq)
-      ns <- IO.pure(createWorkflow(onMenuItemClick, ps, text, onTextEdit, saveText))
+      ns <- IO.pure(createUIWorkflow(onMenuItemClick, pages, text, onTextEdit, saveText))
       st <- IO {
         saveText.doOnNext(t => println("save " + t._2 + " " + t._3.en)).subscribe()
       }
@@ -48,7 +48,7 @@ object Texts_ui {
   val < = dsl.tags
   val ^ = dsl.attributes
 
-  private def createWorkflow(
+  private def createUIWorkflow(
                               currentTextId: Handler[Item],
                               ps: List[Page],
                               texts: Observable[Texts],
@@ -61,8 +61,6 @@ object Texts_ui {
     } yield Item((page.page_id, textId), s"${page.page_id}.$textId"))
 
     val combineTextAndItsIdToSave: Observable[(PageId, String, Texts)] = onTextEdit.combineLatestMap(currentTextId)((text, item) => (item.id._1, item.id._2, text))
-    val engTextVal = textForLang(texts, _.en)
-    val engTextEdit: Observable[String] => Observable[Texts] = changeText(texts, (t, s) => t.copy(en = s))
 
     <.div(^.className := "full height",
       listItems(listItemsObs, currentTextId),
@@ -70,14 +68,22 @@ object Texts_ui {
         <.form(
           ^.className := "ui form",
           <.div(^.className := "ui header", currentTextId.map(_.title)),
-          <.div(
-            ^.className := "field",
-            <.label("eng"),
-            <.textArea(^.value <-- engTextVal, ^.onInput.value.transform(engTextEdit) --> onTextEdit)
-          ),
+          editorForLang("eng", texts, onTextEdit, _.en, (t, s) => t.copy(en = s)),
           <.button(^.className := "ui teal large submit button", "Save", ^.onClick(combineTextAndItsIdToSave) --> saveText),
         )
       )
+    )
+  }
+
+  private def editorForLang(label: String, texts: Observable[Texts], onTextEdit: Handler[Texts], stringForLang: Texts => Option[String], changeTextLang: (Texts, Option[String]) => Texts): VNode = {
+    editorForLang2(label, textForLang(texts, stringForLang), changeText(texts, changeTextLang), onTextEdit)
+  }
+
+  private def editorForLang2(label: String, langTextVal: Observable[String], langTextEdit: Observable[String] => Observable[Texts], onTextEdit: Handler[Texts]) = {
+    <.div(
+      ^.className := "field",
+      <.label(label),
+      <.textArea(^.value <-- langTextVal, ^.onInput.value.transform(langTextEdit) --> onTextEdit)
     )
   }
 
