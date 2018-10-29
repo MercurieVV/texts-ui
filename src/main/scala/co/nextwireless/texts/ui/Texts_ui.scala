@@ -24,12 +24,12 @@ object Texts_ui {
   def main(args: Array[String]): Unit = {
 
     val flow: IO[Unit] = for {
-      onMenuItemClick <- Handler.create[Item]
+      onMenuItemClick <- Handler.create[(PageId, String)]
       enabledEdditing <- Handler.create[Boolean](true)
       onTextEdit <- Handler.create[Texts]
       saveText <- Handler.create[(PageId, String, Texts)]
       pages <- TextsWsApi.pages("mde")
-      textReq <- IO.pure(onMenuItemClick.map(pg => TextsWsApi.texts("mde", pg.id._1, pg.id._2)))
+      textReq <- IO.pure(onMenuItemClick.map(pg => TextsWsApi.texts("mde", pg._1, pg._2)))
       text <- HammockExecuter.hammockObservableExec(textReq)
       ns <- IO.pure(createUIWorkflow(onMenuItemClick, pages, text, onTextEdit, saveText))
       st <- IO {
@@ -42,32 +42,28 @@ object Texts_ui {
   }
 
 
-
   case class Item(id: (PageId, String), title: String)
 
   val < = dsl.tags
   val ^ = dsl.attributes
 
   private def createUIWorkflow(
-                              currentTextId: Handler[Item],
-                              ps: List[Page],
-                              texts: Observable[Texts],
-                              onTextEdit: Handler[Texts],
-                              saveText: Handler[(PageId, String, Texts)]
-                            ) = {
-    val listItemsObs = Observable(for {
-      page <- ps
-      textId <- page.text_ids
-    } yield Item((page.page_id, textId), s"${page.page_id}.$textId"))
+                                currentTextId: Handler[(PageId, String)],
+                                pages: List[Page],
+                                texts: Observable[Texts],
+                                onTextEdit: Handler[Texts],
+                                saveText: Handler[(PageId, String, Texts)]
+                              ) = {
+    val listItemsObs = Observable(pages)
 
-    val combineTextAndItsIdToSave: Observable[(PageId, String, Texts)] = onTextEdit.combineLatestMap(currentTextId)((text, item) => (item.id._1, item.id._2, text))
+    val combineTextAndItsIdToSave: Observable[(PageId, String, Texts)] = onTextEdit.combineLatestMap(currentTextId)((text, item) => (item._1, item._2, text))
 
     <.div(^.className := "full height",
       listItems(listItemsObs, currentTextId),
       <.div(^.className := "ui container")(
         <.form(
           ^.className := "ui form",
-          <.div(^.className := "ui header", currentTextId.map(_.title)),
+          <.div(^.className := "ui header", currentTextId.map(tid => tid._1 + " " + tid._2)),
           editorForLang("eng", texts, onTextEdit, _.en, (t, s) => t.copy(en = s)),
           <.button(^.className := "ui teal large submit button", "Save", ^.onClick(combineTextAndItsIdToSave) --> saveText),
         )
@@ -87,16 +83,25 @@ object Texts_ui {
     )
   }
 
-  private def listItems(menuItems: Observable[List[Item]], onClick: Handler[Item]) = {
+  private def listItems(menuItems: Observable[List[Page]], onClick: Handler[(PageId, String)]) = {
     <.div(^.className := "toc",
-      <.div(^.className := "ui sidebar inverted vertical menu visible",
-        menuItems.map(_.map(item =>
-          <.a(^.className := "item",
-            ^.onClick(item) --> onClick,
-            item.title,
-          )
-        ))
-      )
+      menuItems.map(_.map(page =>
+        <.div(^.className := "ui sidebar inverted vertical menu visible",
+          <.div(^.className := "item ",
+            <.div(^.className := "header", page.page_id),
+            <.div(^.className := "menu",
+              page.text_ids.flatMap(textId =>
+                List(<.a(^.className := "item",
+                  ^.onClick((page.page_id, textId)) --> onClick,
+                  textId),
+                  <.i(^.className := "minus icon tiny")
+                )
+              )
+            )
+          ),
+          <.i(^.className := "plus inverted icon")
+        )
+      ))
     )
   }
 
